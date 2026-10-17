@@ -18,8 +18,7 @@ import {
 } from 'lucide-react';
 import { Incident, Resource, IncidentStatus, IncidentCategory } from '@/types/incident';
 import { SEED_INCIDENTS, SEED_RESOURCES } from '@/lib/seedData';
-import { db, signInDemoUser, isFirebaseConfigured, isProductionEnvironment } from '@/lib/firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api';
 import { useUserRole } from '@/lib/roleContext';
 
 export default function DashboardPage() {
@@ -31,62 +30,38 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Attempt Firebase demo sign-in
-    signInDemoUser();
-
-    const isProd = isProductionEnvironment();
-    const hasConfig = isFirebaseConfigured();
-
-    if (isProd && !hasConfig) {
-      setFirestoreError("CRITICAL: Cloud Firestore is not configured in this production environment. Please configure NEXT_PUBLIC_FIREBASE_* environment variables.");
-      setLoading(false);
-      return;
-    }
-
+  const loadData = async () => {
     try {
-      const q = query(collection(db, "incidents"), orderBy("created_at", "desc"));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        setLoading(false);
-        const remoteList: Incident[] = [];
-        snapshot.forEach((doc) => {
-          remoteList.push({ id: doc.id, ...doc.data() } as Incident);
-        });
-        if (remoteList.length > 0) {
-          setIncidents(remoteList);
-          setIsDemoData(false);
-        } else if (!isProd) {
-          // Empty remote database in development: load seed data
-          setIncidents(SEED_INCIDENTS);
-          setResources(SEED_RESOURCES);
-          setIsDemoData(true);
-        } else {
-          setIncidents([]);
-          setIsDemoData(false);
-        }
-      }, (err) => {
-        setLoading(false);
-        if (isProd) {
-          setFirestoreError(`Firestore Connection Error: ${err.message}. Live Firestore access is strictly enforced in production.`);
-        } else {
-          console.info("Firestore live listener in development fallback mode with seeded data:", err.message);
-          setIncidents(SEED_INCIDENTS);
-          setResources(SEED_RESOURCES);
-          setIsDemoData(true);
-        }
-      });
-      return () => unsubscribe();
-    } catch (e: any) {
-      setLoading(false);
-      if (isProd) {
-        setFirestoreError(`Firestore Initialization Failed: ${e.message}`);
+      setLoading(true);
+      setFirestoreError(null);
+      const [incList, resList] = await Promise.all([
+        apiFetch<Incident[]>('/api/incidents'),
+        apiFetch<Resource[]>('/api/incidents/resources/pool')
+      ]);
+      if (incList && incList.length > 0) {
+        setIncidents(incList);
+        setIsDemoData(incList.every(i => i.is_demo));
       } else {
-        console.info("Firestore initialization development fallback:", e);
         setIncidents(SEED_INCIDENTS);
-        setResources(SEED_RESOURCES);
         setIsDemoData(true);
       }
+      if (resList && resList.length > 0) {
+        setResources(resList);
+      } else {
+        setResources(SEED_RESOURCES);
+      }
+    } catch (err: any) {
+      console.info("Using seed fallback while backend loads:", err.message);
+      setIncidents(SEED_INCIDENTS);
+      setResources(SEED_RESOURCES);
+      setIsDemoData(true);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadData();
   }, [setIsDemoData]);
 
   // Filter calculations

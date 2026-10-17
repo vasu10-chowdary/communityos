@@ -4,8 +4,9 @@ from fastapi.testclient import TestClient
 from firebase_admin import auth as fb_auth
 from app.main import app
 from app.core.rate_limit import analyze_rate_limiter
-from app.core.auth import AuthenticatedUser, get_current_user
+from app.core.auth import AuthenticatedUser, get_current_user, create_access_token
 from app.core.config import settings
+from app.services.database import get_db
 
 client = TestClient(app)
 
@@ -119,6 +120,12 @@ def test_spoofed_role_header_or_body_ignored():
         assert "Forbidden" in response.json()["detail"]
 
 def test_coordinator_can_assign_resource():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO incidents (id, title, description, category, status, created_at, updated_at) VALUES ('inc-demo-101', 'Severe Stormwater Backflow', 'Flood test', 'Flooding and waterlogging', 'In Review', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z');")
+        cursor.execute("INSERT OR REPLACE INTO resources (id, name, type, availability, created_at, updated_at) VALUES ('res-demo-202', 'Demo Pump Trailer 202', 'Pumps', 'Available', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z');")
+        conn.commit()
+
     with patch("firebase_admin.auth.verify_id_token", side_effect=mock_verify_id_token):
         response = client.post(
             "/api/incidents/assign-resource",
@@ -157,69 +164,34 @@ def test_resolution_releases_assigned_resource():
     Verifies that resolving an incident with an assigned resource executes a transaction
     that releases the resource back to 'Available' and clears assigned_incident.
     """
-    mock_db = MagicMock()
-    mock_transaction = MagicMock()
-    mock_inc_ref = MagicMock()
-    mock_res_ref = MagicMock()
-
-    mock_inc_snap = MagicMock()
-    mock_inc_snap.exists = True
-    mock_inc_snap.to_dict.return_value = {
-        "title": "Severe flooding on Main St",
-        "status": "In Progress",
-        "assigned_resource_id": "res-pump-101"
-    }
-
-    mock_res_snap = MagicMock()
-    mock_res_snap.exists = True
-    mock_res_snap.to_dict.return_value = {
-        "name": "High-Capacity Sump Pump",
-        "availability": "Busy",
-        "assigned_incident": "inc-demo-101"
-    }
-
-    def fake_get(transaction=None):
-        return mock_inc_snap
-    mock_inc_ref.get = fake_get
-
-    def fake_res_get(transaction=None):
-        return mock_res_snap
-    mock_res_ref.get = fake_res_get
-
-    mock_db.collection.return_value.document.side_effect = lambda doc_id: mock_inc_ref if "inc" in doc_id else mock_res_ref
-    mock_db.transaction.return_value = mock_transaction
-
-    def fake_transactional(fn):
-        def wrapper(transaction, inc_ref):
-            return fn(transaction, inc_ref)
-        return wrapper
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO resources (id, name, type, availability, assigned_incident, created_at, updated_at) VALUES ('res-pump-101', 'High-Capacity Sump Pump', 'Pumps', 'Busy', 'inc-test-res-1', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z');")
+        cursor.execute("INSERT OR REPLACE INTO incidents (id, title, description, category, status, assigned_resource_id, created_at, updated_at) VALUES ('inc-test-res-1', 'Severe flooding on Main St', 'Flood test', 'Flooding and waterlogging', 'In Progress', 'res-pump-101', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z');")
+        conn.commit()
 
     with patch("firebase_admin.auth.verify_id_token", side_effect=mock_verify_id_token):
-        with patch("app.routes.incidents.get_db", return_value=mock_db):
-            with patch("firebase_admin.firestore.transactional", side_effect=fake_transactional):
-                response = client.post(
-                    "/api/incidents/update-status",
-                    headers={"Authorization": "Bearer mock-coordinator-token"},
-                    json={
-                        "status": "Resolved",
-                        "incident_id": "inc-demo-101",
-                        "resolution_notes": "Hazard cleared, restoring equipment."
-                    }
-                )
-                assert response.status_code == 200
-                data = response.json()
-                assert data["new_status"] == "Resolved"
-                assert data["released_resource_id"] == "res-pump-101"
+        response = client.post(
+            "/api/incidents/update-status",
+            headers={"Authorization": "Bearer mock-coordinator-token"},
+            json={
+                "status": "Resolved",
+                "incident_id": "inc-test-res-1",
+                "resolution_notes": "Hazard cleared, restoring equipment."
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["new_status"] == "Resolved"
+        assert data["released_resource_id"] == "res-pump-101"
 
-                # Verify resource update was called on transaction
-                updated_res_calls = [
-                    call for call in mock_transaction.update.call_args_list 
-                    if call[0][0] == mock_res_ref
-                ]
-                assert len(updated_res_calls) == 1
-                res_update_dict = updated_res_calls[0][0][1]
-                assert res_update_dict["availability"] == "Available"
-                assert res_update_dict["assigned_incident"] is None
+    # Verify resource update was committed in SQLite
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT availability, assigned_incident FROM resources WHERE id = 'res-pump-101';")
+        res_row = cursor.fetchone()
+        assert res_row[0] == "Available"
+        assert res_row[1] is None
 
 def test_resolution_unassigned_incident():
     """
@@ -306,40 +278,20 @@ def test_resource_assignment_concurrency_conflict():
     Verifies that when a resource is already marked Busy or assigned to another incident,
     the transaction rejects the assignment with HTTP 409 Conflict.
     """
-    mock_db = MagicMock()
-    mock_transaction = MagicMock()
-    mock_res_ref = MagicMock()
-    mock_inc_ref = MagicMock()
-
-    mock_res_snap = MagicMock()
-    mock_res_snap.exists = True
-    # Resource is already busy on inc-other-999
-    mock_res_snap.to_dict.return_value = {
-        "name": "Vacuum Pump Unit 1",
-        "availability": "Busy",
-        "assigned_incident": "inc-other-999"
-    }
-
-    mock_res_ref.get.return_value = mock_res_snap
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO resources (id, name, type, availability, assigned_incident, created_at, updated_at) VALUES ('res-busy-999', 'Vacuum Pump Unit 1', 'Pumps', 'Busy', 'inc-other-999', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z');")
+        cursor.execute("INSERT OR REPLACE INTO incidents (id, title, description, category, status, created_at, updated_at) VALUES ('inc-demo-101', 'Stormwater Backflow', 'Test flood', 'Flooding', 'In Review', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z');")
+        conn.commit()
 
     with patch("firebase_admin.auth.verify_id_token", side_effect=mock_verify_id_token):
-        with patch("app.routes.incidents.get_db", return_value=mock_db):
-            mock_db.collection.return_value.document.side_effect = [mock_inc_ref, mock_res_ref]
-            
-            # The transactional decorator calls the function with transaction
-            def fake_transactional(fn):
-                def wrapper(transaction, inc_ref, res_ref):
-                    return fn(transaction, inc_ref, res_ref)
-                return wrapper
-            
-            with patch("firebase_admin.firestore.transactional", side_effect=fake_transactional):
-                response = client.post(
-                    "/api/incidents/assign-resource",
-                    headers={"Authorization": "Bearer mock-coordinator-token"},
-                    json={"incident_id": "inc-demo-101", "resource_id": "res-demo-202"}
-                )
-                assert response.status_code == 409
-                assert "Resource conflict" in response.json()["detail"]
+        response = client.post(
+            "/api/incidents/assign-resource",
+            headers={"Authorization": "Bearer mock-coordinator-token"},
+            json={"incident_id": "inc-demo-101", "resource_id": "res-busy-999"}
+        )
+        assert response.status_code == 409
+        assert "Resource conflict" in response.json()["detail"]
 
 # ----------------- INPUT & IMAGE VALIDATION TESTS -----------------
 def test_image_validation_exceeds_size():
@@ -702,4 +654,112 @@ def test_cors_preflight_and_unauthorized_origin():
     )
     # Untrusted origin should not receive access-control-allow-origin
     assert res_untrusted.headers.get("access-control-allow-origin") != "https://malicious-attacker.com"
+
+
+# ----------------- SQLITE PERSISTENCE & REST ENDPOINTS TESTS -----------------
+def test_jwt_auth_token_issuance_and_rbac():
+    # 1. Citizen token generation (open to all)
+    res_citizen = client.post("/api/auth/token", json={"role": "citizen", "name": "Test Citizen"})
+    assert res_citizen.status_code == 200
+    citizen_token = res_citizen.json()["access_token"]
+    assert res_citizen.json()["role"] == "citizen"
+
+    # Test /api/auth/me with JWT token
+    res_me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {citizen_token}"})
+    assert res_me.status_code == 200
+    assert res_me.json()["role"] == "citizen"
+
+    # 2. Coordinator token generation under DEMO_MODE
+    with patch.object(settings, "DEMO_MODE", True):
+        res_coord = client.post("/api/auth/token", json={"role": "coordinator"})
+        assert res_coord.status_code == 200
+        assert res_coord.json()["role"] == "coordinator"
+        assert res_coord.json()["is_demo_auth"] is True
+
+    # 3. Coordinator token rejected in strict production without valid PIN
+    with patch.object(settings, "DEMO_MODE", False):
+        res_strict_fail = client.post("/api/auth/token", json={"role": "coordinator", "pin": "wrong-pin"})
+        assert res_strict_fail.status_code == 403
+
+        res_strict_ok = client.post("/api/auth/token", json={"role": "coordinator", "pin": settings.COORDINATOR_PIN})
+        assert res_strict_ok.status_code == 200
+        assert res_strict_ok.json()["role"] == "coordinator"
+
+def test_sqlite_incidents_crud_flow():
+    # Issue citizen JWT token
+    res_token = client.post("/api/auth/token", json={"role": "citizen", "name": "Elena Citizen"})
+    token = res_token.json()["access_token"]
+
+    # 1. Create incident via POST /api/incidents
+    create_payload = {
+        "title": "Severe Flash Flood at Elm & 4th",
+        "description": "Culvert clogged, street submerged 1 foot.",
+        "category": "Flooding and waterlogging",
+        "severity": "High",
+        "severity_level": 4,
+        "urgency_score": 85,
+        "location": "Elm St & 4th Ave",
+        "latitude": 37.7790,
+        "longitude": -122.4180
+    }
+    res_create = client.post(
+        "/api/incidents",
+        headers={"Authorization": f"Bearer {token}"},
+        json=create_payload
+    )
+    assert res_create.status_code == 200
+    created_data = res_create.json()
+    incident_id = created_data["id"]
+    assert created_data["title"] == "Severe Flash Flood at Elm & 4th"
+    assert created_data["status"] == "Reported"
+
+    # 2. Retrieve single incident via GET /api/incidents/{id}
+    res_get = client.get(f"/api/incidents/{incident_id}")
+    assert res_get.status_code == 200
+    assert res_get.json()["id"] == incident_id
+
+    # 3. Retrieve incident list via GET /api/incidents
+    res_list = client.get("/api/incidents")
+    assert res_list.status_code == 200
+    items = res_list.json()
+    assert isinstance(items, list)
+    assert any(i["id"] == incident_id for i in items)
+
+def test_sqlite_resources_pool_and_metrics():
+    # Issue coordinator token
+    coord_token = create_access_token(uid="coord-lead", role="coordinator")
+
+    # 1. Retrieve resource pool
+    res_pool = client.get("/api/incidents/resources/pool")
+    assert res_pool.status_code == 200
+    pool = res_pool.json()
+    assert isinstance(pool, list)
+    assert len(pool) >= 1
+
+    # 2. Create resource via Coordinator
+    res_create = client.post(
+        "/api/incidents/resources/pool",
+        headers={"Authorization": f"Bearer {coord_token}"},
+        json={
+            "name": "Heavy Duty Arborist Chipper Unit",
+            "category": "cleanup teams",
+            "type": "Tree Clearance",
+            "capacity": "15 ton/hr chipper",
+            "service_area": "District 5",
+            "location": "South Yard",
+            "contact": "tree@city.gov",
+            "latitude": 37.7700,
+            "longitude": -122.4200
+        }
+    )
+    assert res_create.status_code == 200
+    assert res_create.json()["name"] == "Heavy Duty Arborist Chipper Unit"
+
+    # 3. Retrieve metrics summary
+    res_metrics = client.get("/api/incidents/metrics/summary")
+    assert res_metrics.status_code == 200
+    metrics = res_metrics.json()
+    assert "total_incidents" in metrics
+    assert "available_resources" in metrics
+    assert "busy_resources" in metrics
 

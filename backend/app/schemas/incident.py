@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 class IncidentAnalysisRequest(BaseModel):
+    incident_id: Optional[str] = Field(None, description="Optional incident ID to associate and persist analysis with")
     title: str = Field(..., min_length=3, max_length=150, description="Brief summary of the incident")
     description: str = Field(..., min_length=10, max_length=4000, description="Full description of the issue")
     category: Optional[str] = Field("Other", description="User-reported category")
@@ -86,3 +87,26 @@ class IncidentStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="Reported, In Review, Resource Dispatched, In Progress, Resolved")
     resolution_notes: Optional[str] = None
     responder_progress_note: Optional[str] = None
+
+class IncidentCreateRequest(BaseModel):
+    title: str = Field(..., min_length=3, max_length=150)
+    description: str = Field(..., min_length=10, max_length=4000)
+    category: str = Field(default="Other community assistance requests")
+    location: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    image_url: Optional[str] = None
+    image_base64: Optional[str] = None
+    latest_analysis: Optional[Dict[str, Any]] = None
+    is_demo: Optional[bool] = False
+
+class ResourceCreateRequest(BaseModel):
+    name: str = Field(..., min_length=3, max_length=120)
+    type: str = Field(..., min_length=3, max_length=120)
+    category: Optional[str] = "general"
+    capacity: Optional[str] = None
+    service_area: Optional[str] = None
+    location: Optional[str] = None
+    contact: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None

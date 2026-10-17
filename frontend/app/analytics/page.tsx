@@ -13,8 +13,7 @@ import {
 } from 'lucide-react';
 import { Incident, Resource } from '@/types/incident';
 import { SEED_INCIDENTS, SEED_RESOURCES } from '@/lib/seedData';
-import { db, isFirebaseConfigured, isProductionEnvironment } from '@/lib/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api';
 import { useUserRole } from '@/lib/roleContext';
 
 export default function AnalyticsPage() {
@@ -24,91 +23,40 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    const isProd = isProductionEnvironment();
-    const hasConfig = isFirebaseConfigured();
-
-    if (isProd && !hasConfig) {
-      setErrorMsg("Cloud Firestore is not configured in production. Configure NEXT_PUBLIC_FIREBASE_* variables.");
-      setLoading(false);
-      return;
-    }
-
+  const loadAnalyticsData = async () => {
     try {
-      let incLoaded = false;
-      let resLoaded = false;
+      setLoading(true);
+      setErrorMsg(null);
+      const [incList, resList] = await Promise.all([
+        apiFetch<Incident[]>('/api/incidents'),
+        apiFetch<Resource[]>('/api/incidents/resources/pool')
+      ]);
 
-      const checkBothLoaded = () => {
-        if (incLoaded && resLoaded) setLoading(false);
-      };
-
-      const unsubIncidents = onSnapshot(collection(db, "incidents"), (snapshot) => {
-        incLoaded = true;
-        const remoteList: Incident[] = [];
-        snapshot.forEach((doc) => {
-          remoteList.push({ id: doc.id, ...doc.data() } as Incident);
-        });
-
-        if (remoteList.length > 0) {
-          setIncidents(remoteList);
-          setIsDemoData(false);
-        } else if (!isProd) {
-          setIncidents(SEED_INCIDENTS);
-          setIsDemoData(true);
-        } else {
-          setIncidents([]);
-        }
-        checkBothLoaded();
-      }, (err) => {
-        incLoaded = true;
-        if (isProd) {
-          setErrorMsg(`Incidents Sync Error: ${err.message}`);
-        } else {
-          setIncidents(SEED_INCIDENTS);
-          setIsDemoData(true);
-        }
-        checkBothLoaded();
-      });
-
-      const unsubResources = onSnapshot(collection(db, "resources"), (snapshot) => {
-        resLoaded = true;
-        const remoteList: Resource[] = [];
-        snapshot.forEach((doc) => {
-          remoteList.push({ id: doc.id, ...doc.data() } as Resource);
-        });
-
-        if (remoteList.length > 0) {
-          setResources(remoteList);
-        } else if (!isProd) {
-          setResources(SEED_RESOURCES);
-        } else {
-          setResources([]);
-        }
-        checkBothLoaded();
-      }, (err) => {
-        resLoaded = true;
-        if (isProd) {
-          setErrorMsg(`Resources Sync Error: ${err.message}`);
-        } else {
-          setResources(SEED_RESOURCES);
-        }
-        checkBothLoaded();
-      });
-
-      return () => {
-        unsubIncidents();
-        unsubResources();
-      };
-    } catch (e: any) {
-      setLoading(false);
-      if (isProd) {
-        setErrorMsg(`Initialization error: ${e.message}`);
+      if (incList && incList.length > 0) {
+        setIncidents(incList);
+        setIsDemoData(incList.every(i => i.is_demo));
       } else {
         setIncidents(SEED_INCIDENTS);
-        setResources(SEED_RESOURCES);
         setIsDemoData(true);
       }
+
+      if (resList && resList.length > 0) {
+        setResources(resList);
+      } else {
+        setResources(SEED_RESOURCES);
+      }
+    } catch (err: any) {
+      console.info("Using seed fallback on analytics:", err.message);
+      setIncidents(SEED_INCIDENTS);
+      setResources(SEED_RESOURCES);
+      setIsDemoData(true);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadAnalyticsData();
   }, [setIsDemoData]);
 
   // Dynamic calculations from live data

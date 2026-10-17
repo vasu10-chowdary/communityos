@@ -14,8 +14,7 @@ import {
 } from 'lucide-react';
 import { Incident } from '@/types/incident';
 import { SEED_INCIDENTS } from '@/lib/seedData';
-import { db, isFirebaseConfigured, isProductionEnvironment } from '@/lib/firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api';
 import { useUserRole } from '@/lib/roleContext';
 
 export default function IncidentMapPage() {
@@ -26,60 +25,32 @@ export default function IncidentMapPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    const isProd = isProductionEnvironment();
-    const hasConfig = isFirebaseConfigured();
-
-    if (isProd && !hasConfig) {
-      setErrorMsg("Cloud Firestore is not configured in production. Configure NEXT_PUBLIC_FIREBASE_* variables.");
-      setLoading(false);
-      return;
-    }
-
+  const loadIncidents = async () => {
     try {
-      const q = query(collection(db, "incidents"), orderBy("created_at", "desc"));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        setLoading(false);
-        const remoteList: Incident[] = [];
-        snapshot.forEach((doc) => {
-          remoteList.push({ id: doc.id, ...doc.data() } as Incident);
-        });
-
-        if (remoteList.length > 0) {
-          setIncidents(remoteList);
-          setSelectedIncident(prev => prev ? remoteList.find(i => i.id === prev.id) || remoteList[0] : remoteList[0]);
-          setIsDemoData(false);
-        } else if (!isProd) {
-          setIncidents(SEED_INCIDENTS);
-          setSelectedIncident(SEED_INCIDENTS[0]);
-          setIsDemoData(true);
-        } else {
-          setIncidents([]);
-          setSelectedIncident(null);
-          setIsDemoData(false);
-        }
-      }, (err) => {
-        setLoading(false);
-        if (isProd) {
-          setErrorMsg(`Firestore Error: ${err.message}`);
-        } else {
-          console.info("Firestore map listener fallback:", err.message);
-          setIncidents(SEED_INCIDENTS);
-          setSelectedIncident(SEED_INCIDENTS[0]);
-          setIsDemoData(true);
-        }
-      });
-      return () => unsubscribe();
-    } catch (e: any) {
-      setLoading(false);
-      if (isProd) {
-        setErrorMsg(`Initialization error: ${e.message}`);
+      setLoading(true);
+      setErrorMsg(null);
+      const list = await apiFetch<Incident[]>('/api/incidents');
+      if (list && list.length > 0) {
+        setIncidents(list);
+        setSelectedIncident(list[0]);
+        setIsDemoData(list.every(i => i.is_demo));
       } else {
         setIncidents(SEED_INCIDENTS);
         setSelectedIncident(SEED_INCIDENTS[0]);
         setIsDemoData(true);
       }
+    } catch (err: any) {
+      console.info("Using seed fallback on map:", err.message);
+      setIncidents(SEED_INCIDENTS);
+      setSelectedIncident(SEED_INCIDENTS[0]);
+      setIsDemoData(true);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadIncidents();
   }, [setIsDemoData]);
 
   const filteredIncidents = incidents.filter(i => {

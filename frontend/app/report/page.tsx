@@ -14,8 +14,7 @@ import {
   X
 } from 'lucide-react';
 import { IncidentCategory } from '@/types/incident';
-import { db, auth } from '@/lib/firebase';
-import { collection, addDoc } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api';
 import { useUserRole } from '@/lib/roleContext';
 
 const CATEGORIES: IncidentCategory[] = [
@@ -118,7 +117,6 @@ export default function ReportPage() {
 
     setSubmitting(true);
     try {
-      const activeUid = auth.currentUser?.uid || userId || 'evaluator-demo-reporter';
       const newIncident = {
         title: title.trim(),
         description: description.trim(),
@@ -128,30 +126,21 @@ export default function ReportPage() {
         longitude: longitude ? parseFloat(longitude) : -122.4194,
         image_url: imagePreview || null,
         image_base64: imageBase64 || null,
-        status: 'Reported',
-        created_at: new Date().toISOString(),
-        reporter_id: activeUid,
-        reporter_name: reporterName.trim() || userName,
         is_demo: false,
       };
 
-      await addDoc(collection(db, 'incidents'), newIncident);
+      const result = await apiFetch('/api/incidents', {
+        method: 'POST',
+        body: JSON.stringify(newIncident)
+      });
 
-      setSuccessMsg('Incident securely published to Firestore! Redirecting to command dashboard...');
+      setSuccessMsg(`Incident #${result.id || ''} securely logged to CommunityOS! Redirecting...`);
       setTimeout(() => {
-        router.push('/dashboard');
-      }, 1500);
+        router.push(result.id ? `/incident/${result.id}` : '/dashboard');
+      }, 1200);
     } catch (err: any) {
-      if (process.env.NEXT_PUBLIC_ENVIRONMENT === 'production') {
-        setErrorMsg(`Failed to save incident to Cloud Firestore: ${err.message || 'Unknown database error'}. Live database connection required in production.`);
-        setSubmitting(false);
-        return;
-      }
-      console.warn("Firestore save fallback in development:", err);
-      setSuccessMsg('Incident record logged in demonstration state (Development Mode). Redirecting to dashboard...');
-      setTimeout(() => {
-        router.push('/dashboard');
-      }, 1500);
+      console.warn("Incident creation error:", err);
+      setErrorMsg(`Failed to save incident: ${err.message || 'Unknown server error'}.`);
     } finally {
       setSubmitting(false);
     }

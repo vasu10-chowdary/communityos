@@ -9,20 +9,29 @@ class Settings(BaseModel):
     PROJECT_NAME: str = "CommunityOS API"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development").lower()
     PORT: int = int(os.getenv("PORT", "8000"))
-    
+
     # Google Gemini GenAI SDK
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     GEMINI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
     GEMINI_MAX_RETRIES: int = int(os.getenv("GEMINI_MAX_RETRIES", "1"))
-    
+
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
-    
-    # Firebase
+
+    # Database & Persistence (SQLite)
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "communityos.db")
+
+    # Cryptographic JWT & Role Security
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "communityos-h2s-emergency-secure-key-2026")
+    DEMO_MODE: bool = os.getenv("DEMO_MODE", "true").lower() in ("true", "1", "yes")
+    COORDINATOR_PIN: str = os.getenv("COORDINATOR_PIN", "coord-2026")
+    RESPONDER_PIN: str = os.getenv("RESPONDER_PIN", "resp-2026")
+
+    # Firebase (Legacy compatibility during transition)
     FIREBASE_PROJECT_ID: str = os.getenv("FIREBASE_PROJECT_ID", "communityos-demo")
     FIREBASE_SERVICE_ACCOUNT_KEY: str = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY", "")
-    
+
     # CORS: Parse comma-separated list of origins. In production never allow '*'
     @property
     def allowed_origins(self) -> List[str]:
@@ -31,7 +40,7 @@ class Settings(BaseModel):
             origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
             if origins:
                 return origins
-        
+
         # Default local origins for development
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").strip()
         default_origins = [

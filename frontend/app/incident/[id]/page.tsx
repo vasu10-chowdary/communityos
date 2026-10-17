@@ -22,8 +22,6 @@ import {
 } from 'lucide-react';
 import { Incident, Resource, AIAnalysis, IncidentStatus } from '@/types/incident';
 import { SEED_INCIDENTS, SEED_RESOURCES } from '@/lib/seedData';
-import { db, isProductionEnvironment } from '@/lib/firebase';
-import { doc, getDoc, updateDoc, collection, getDocs, query, limit } from 'firebase/firestore';
 import { useUserRole } from '@/lib/roleContext';
 import { apiFetch } from '@/lib/api';
 
@@ -80,25 +78,18 @@ export default function IncidentDetailPage() {
 
     const fetchDoc = async () => {
       try {
-        const docRef = doc(db, 'incidents', incidentId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setIncident({ id: docSnap.id, ...docSnap.data() } as Incident);
+        const [incData, resList] = await Promise.all([
+          apiFetch<Incident>(`/api/incidents/${incidentId}`),
+          apiFetch<Resource[]>('/api/incidents/resources/pool')
+        ]);
+        if (incData) {
+          setIncident(incData);
         }
-
-        // Also fetch live resources for dispatch if available in Firestore
-        const resSnap = await getDocs(collection(db, 'resources'));
-        if (!resSnap.empty) {
-          const liveList: Resource[] = [];
-          resSnap.forEach((r) => {
-            liveList.push({ id: r.id, ...r.data() } as Resource);
-          });
-          if (liveList.length > 0) {
-            setResources(liveList);
-          }
+        if (resList && resList.length > 0) {
+          setResources(resList);
         }
       } catch (e) {
-        console.info("Using incident state:", e);
+        console.info("Using incident state fallback:", e);
       }
     };
     if (incidentId) fetchDoc();
@@ -123,38 +114,19 @@ export default function IncidentDetailPage() {
       }> = [];
 
       try {
-        const incidentsQuery = query(collection(db, 'incidents'), limit(50));
-        const snap = await getDocs(incidentsQuery);
-        snap.forEach((docSnap) => {
-          if (docSnap.id !== incident.id) {
-            const d = docSnap.data();
-            existingIncidents.push({
-              id: docSnap.id,
-              title: d.title || '',
-              description: d.description || '',
-              category: d.category || '',
-              latitude: typeof d.latitude === 'number' ? d.latitude : undefined,
-              longitude: typeof d.longitude === 'number' ? d.longitude : undefined,
-            });
-          }
-        });
-      } catch (firestoreErr: any) {
-        console.info("Firestore live incident query for duplicate check:", firestoreErr);
-        if (isProductionEnvironment()) {
-          throw new Error(`Failed to query live incidents from Firestore: ${firestoreErr.message}`);
-        }
-      }
-
-      // Development fallback if Firestore returned no other incidents and not in production
-      if (existingIncidents.length === 0 && !isProductionEnvironment()) {
-        existingIncidents = SEED_INCIDENTS.filter(i => i.id !== incident.id).map(i => ({
-          id: i.id,
-          title: i.title,
-          description: i.description,
-          category: i.category,
-          latitude: i.latitude,
-          longitude: i.longitude,
-        }));
+        const allIncidents = await apiFetch<Incident[]>('/api/incidents');
+        existingIncidents = (allIncidents || [])
+          .filter(i => i.id !== incident.id)
+          .map(d => ({
+            id: d.id,
+            title: d.title || '',
+            description: d.description || '',
+            category: d.category || '',
+            latitude: typeof d.latitude === 'number' ? d.latitude : undefined,
+            longitude: typeof d.longitude === 'number' ? d.longitude : undefined,
+          }));
+      } catch (err: any) {
+        console.info("Backend incident query for duplicate check:", err);
       }
 
       setScannedCount(existingIncidents.length);
@@ -236,6 +208,7 @@ export default function IncidentDetailPage() {
       const analysisData = await apiFetch<AIAnalysis>('/api/incidents/analyze', {
         method: 'POST',
         body: JSON.stringify({
+          incident_id: incident.id,
           title: incident.title,
           description: incident.description,
           category: incident.category,
@@ -260,17 +233,6 @@ export default function IncidentDetailPage() {
 
       // Automatically fetch resource recommendations based on new analysis
       handleRecommendResources(analysisData.severity_level, analysisData.urgency_score);
-
-      try {
-        await updateDoc(doc(db, 'incidents', incident.id), {
-          severity_level: analysisData.severity_level,
-          severity: analysisData.severity,
-          latest_analysis: analysisData,
-          updated_at: updatedIncident.updated_at
-        });
-      } catch (err) {
-        console.info("Firestore update skipped:", err);
-      }
     } catch (err: any) {
       setAnalysisError(err.message || 'Error communicating with FastAPI incident analysis endpoint.');
     } finally {

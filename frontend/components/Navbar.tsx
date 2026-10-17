@@ -25,22 +25,13 @@ export default function Navbar() {
 
   return (
     <header className="bg-navy-900 border-b border-navy-800 text-white sticky top-0 z-50 shadow-md">
-      {/* Configuration Status / Demo Data Banner */}
-      {!configured ? (
-        <div className={`${isProd ? 'bg-red-600 text-white' : 'bg-amber-500 text-navy-900'} px-4 py-1.5 text-center text-xs font-bold flex items-center justify-center space-x-2 shadow-inner`}>
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>
-            {isProd 
-              ? "CRITICAL CONFIGURATION ERROR: Live Firebase credentials missing in production. Set NEXT_PUBLIC_FIREBASE_* variables."
-              : "FIREBASE WEB APP NOT CONFIGURED: Running in local offline demo fallback. Populate NEXT_PUBLIC_FIREBASE_* in frontend/.env.local to enable live database & auth."}
-          </span>
-        </div>
-      ) : isDemoData ? (
+      {/* Status / Demo Data Banner */}
+      {isDemoData && (
         <div className="bg-amber-500 text-navy-900 px-4 py-1 text-center text-xs font-bold flex items-center justify-center space-x-2 shadow-inner">
           <AlertTriangle className="w-4 h-4 text-navy-900 flex-shrink-0" />
-          <span>DEMO DATA ACTIVE — DEVELOPMENT MODE (Simulated Fallback Enabled).</span>
+          <span>DEMO SANDBOX ACTIVE — Pre-seeded civic emergency data loaded. Live actions persist to SQLite.</span>
         </div>
-      ) : null}
+      )}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">

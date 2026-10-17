@@ -1,10 +1,18 @@
+import jwt
 from typing import Optional, List
+from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
 from fastapi import Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import firebase_admin
-from firebase_admin import auth
-from app.services.firebase_service import get_db
+from app.core.config import settings
+from app.services.database import get_db
+
+try:
+    import firebase_admin
+    from firebase_admin import auth as fb_auth
+except ImportError:
+    firebase_admin = None
+    fb_auth = None
 
 class AuthenticatedUser(BaseModel):
     uid: str
@@ -12,16 +20,42 @@ class AuthenticatedUser(BaseModel):
     email: Optional[str] = None
     name: Optional[str] = None
     is_anonymous: bool = False
+    is_demo_auth: bool = False
 
 http_bearer = HTTPBearer(auto_error=False)
 
+def create_access_token(
+    uid: str,
+    role: str,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    expires_delta_hours: int = 24,
+    is_demo_auth: bool = False
+) -> str:
+    """
+    Creates a cryptographically signed HMAC-SHA256 JWT access token.
+    Tamper-proof role and user claim binding.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": uid,
+        "uid": uid,
+        "role": role.lower().strip(),
+        "name": name or uid,
+        "email": email,
+        "is_demo_auth": is_demo_auth,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=expires_delta_hours)).timestamp())
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
+
 async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)) -> AuthenticatedUser:
     """
-    Verifies Firebase ID token from Authorization: Bearer <token>.
+    Verifies Bearer token from Authorization header.
     Resolves role from:
-    1. Custom claims (token['role'])
-    2. Firestore users/{uid} document
-    3. Default to 'citizen'
+    1. Cryptographically verified JWT claims ('role')
+    2. SQLite users table (users.role)
+    3. Strict default to 'citizen'
     
     SECURITY: Never trust client-supplied headers or body fields for role verification.
     """
@@ -33,49 +67,74 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
 
     token = credentials.credentials.strip()
 
-    try:
-        # Verify the ID token using the official Firebase Admin SDK
-        decoded_token = auth.verify_id_token(token)
-    except Exception as e:
-        raise HTTPException(
-            status_code=401,
-            detail=f"Invalid or expired authentication token: {str(e)}"
-        )
+    uid = None
+    role = None
+    email = None
+    name = None
+    is_anon = False
+    is_demo_auth = False
 
-    uid = decoded_token.get("uid")
+    try:
+        # Verify and decode signed JWT using server secret
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])
+        uid = payload.get("sub") or payload.get("uid")
+        role = payload.get("role")
+        email = payload.get("email")
+        name = payload.get("name")
+        is_demo_auth = bool(payload.get("is_demo_auth", False))
+        is_anon = is_demo_auth
+    except jwt.PyJWTError:
+        # Fallback to Firebase verify_id_token if firebase auth is available
+        if fb_auth:
+            try:
+                decoded_token = fb_auth.verify_id_token(token)
+                uid = decoded_token.get("uid")
+                role = decoded_token.get("role")
+                email = decoded_token.get("email")
+                name = decoded_token.get("name")
+                is_anon = decoded_token.get("firebase", {}).get("sign_in_provider") == "anonymous"
+            except Exception as e:
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Invalid or expired authentication token: {str(e)}"
+                )
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired authentication token: signature verification failed."
+            )
+
     if not uid:
         raise HTTPException(status_code=401, detail="Invalid token: missing subject UID.")
 
-    # 1. Check custom claims
-    role = decoded_token.get("role")
+    # If role not embedded in signed token, query SQLite users table
+    if not role or role == "citizen":
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT role, name, email FROM users WHERE uid = ?", (uid,))
+                row = cursor.fetchone()
+                if row and row[0]:
+                    role = row[0]
+                    if not name and row[1]:
+                        name = row[1]
+                    if not email and row[2]:
+                        email = row[2]
+        except Exception as e:
+            print(f"[Auth Warning] SQLite user document lookup failed: {e}")
 
-    # 2. If no custom claim, lookup Firestore users/{uid} document
-    if not role:
-        db = get_db()
-        if db:
-            try:
-                user_doc = db.collection("users").document(uid).get()
-                if user_doc.exists:
-                    doc_data = user_doc.to_dict() or {}
-                    role = doc_data.get("role")
-            except Exception as e:
-                print(f"[Auth Warning] Error fetching user document for role check: {e}")
-
-    # 3. Default fallback role is citizen
     if not role:
         role = "citizen"
 
-    # Normalize role to lowercase
     role = str(role).lower().strip()
-
-    is_anon = decoded_token.get("firebase", {}).get("sign_in_provider") == "anonymous"
 
     return AuthenticatedUser(
         uid=uid,
         role=role,
-        email=decoded_token.get("email"),
-        name=decoded_token.get("name"),
-        is_anonymous=is_anon
+        email=email,
+        name=name,
+        is_anonymous=is_anon,
+        is_demo_auth=is_demo_auth
     )
 
 def require_role(allowed_roles: List[str]):

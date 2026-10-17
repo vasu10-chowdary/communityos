@@ -2,13 +2,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.routes import incidents
+from app.routes import incidents, auth
+from app.services.database import init_db
 from app.services.firebase_service import init_firebase
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize Firebase Admin SDK on startup
-    init_firebase()
+    # Initialize SQLite database engine & seed initial civic resources
+    init_db()
+    # Initialize Firebase Admin SDK if configured
+    try:
+        init_firebase()
+    except Exception as e:
+        print(f"[Lifespan Notice] Firebase fallback init: {e}")
     yield
 
 app = FastAPI(
@@ -35,7 +41,9 @@ async def health_check():
         "environment": settings.ENVIRONMENT,
         "gemini_configured": bool(settings.GEMINI_API_KEY),
         "gemini_model": settings.GEMINI_MODEL,
-        "cors_origins": settings.allowed_origins
+        "cors_origins": settings.allowed_origins,
+        "persistence": "sqlite"
     }
 
+app.include_router(auth.router)
 app.include_router(incidents.router)

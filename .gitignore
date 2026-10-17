@@ -28,6 +28,14 @@ client_secret*.json
 *.pem
 *.key
 
+# SQLite Databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Operating System
 .DS_Store
 Thumbs.db

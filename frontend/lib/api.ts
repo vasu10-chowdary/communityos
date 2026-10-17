@@ -1,4 +1,4 @@
-import { getAuthToken } from '@/lib/firebase';
+import { getAuthToken } from '@/lib/auth';
 
 const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 

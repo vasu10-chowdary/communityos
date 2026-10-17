@@ -15,8 +15,7 @@ import {
 } from 'lucide-react';
 import { Resource } from '@/types/incident';
 import { SEED_RESOURCES } from '@/lib/seedData';
-import { db, isFirebaseConfigured, isProductionEnvironment } from '@/lib/firebase';
-import { collection, onSnapshot, addDoc, query, orderBy } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api';
 import { useUserRole } from '@/lib/roleContext';
 
 export default function ResourcesPage() {
@@ -33,55 +32,29 @@ export default function ResourcesPage() {
   const [capacity, setCapacity] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    const isProd = isProductionEnvironment();
-    const hasConfig = isFirebaseConfigured();
-
-    if (isProd && !hasConfig) {
-      setErrorMsg("Cloud Firestore is not configured in production. Configure NEXT_PUBLIC_FIREBASE_* variables.");
-      setLoading(false);
-      return;
-    }
-
+  const loadResources = async () => {
     try {
-      const q = query(collection(db, "resources"), orderBy("updated_at", "desc"));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        setLoading(false);
-        const remoteList: Resource[] = [];
-        snapshot.forEach((doc) => {
-          remoteList.push({ id: doc.id, ...doc.data() } as Resource);
-        });
-
-        if (remoteList.length > 0) {
-          setResources(remoteList);
-          setIsDemoData(false);
-        } else if (!isProd) {
-          setResources(SEED_RESOURCES);
-          setIsDemoData(true);
-        } else {
-          setResources([]);
-          setIsDemoData(false);
-        }
-      }, (err) => {
-        setLoading(false);
-        if (isProd) {
-          setErrorMsg(`Firestore Error: ${err.message}`);
-        } else {
-          console.info("Firestore resources listener fallback:", err.message);
-          setResources(SEED_RESOURCES);
-          setIsDemoData(true);
-        }
-      });
-      return () => unsubscribe();
-    } catch (e: any) {
-      setLoading(false);
-      if (isProd) {
-        setErrorMsg(`Initialization error: ${e.message}`);
+      setLoading(true);
+      setErrorMsg(null);
+      const list = await apiFetch<Resource[]>('/api/incidents/resources/pool');
+      if (list && list.length > 0) {
+        setResources(list);
+        setIsDemoData(list.every(r => r.is_demo));
       } else {
         setResources(SEED_RESOURCES);
         setIsDemoData(true);
       }
+    } catch (err: any) {
+      console.info("Using seed fallback on resources:", err.message);
+      setResources(SEED_RESOURCES);
+      setIsDemoData(true);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadResources();
   }, [setIsDemoData]);
 
   const handleAddResource = async (e: React.FormEvent) => {
@@ -94,36 +67,24 @@ export default function ResourcesPage() {
     }
 
     setSaving(true);
-    const newRes: Resource = {
-      id: `res-${Date.now()}`,
-      name: name.trim(),
-      type,
-      service_area: serviceArea.trim() || 'Central District',
-      availability: 'Available',
-      capacity: capacity.trim() || 'Standard Response Pack',
-      updated_at: new Date().toISOString(),
-      is_demo: false
-    };
-
     try {
-      await addDoc(collection(db, 'resources'), newRes);
-      setActionSuccess(`Registered ${newRes.name} successfully.`);
+      const created = await apiFetch('/api/incidents/resources/pool', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: name.trim(),
+          type,
+          service_area: serviceArea.trim() || 'Central District',
+          capacity: capacity.trim() || 'Standard Response Pack',
+        })
+      });
+      setActionSuccess(`Registered ${created.name || name} successfully.`);
       setShowAddModal(false);
       setName('');
       setCapacity('');
       setServiceArea('');
+      await loadResources();
     } catch (err: any) {
-      if (isProductionEnvironment()) {
-        setErrorMsg(`Failed to persist resource to Firestore: ${err.message}`);
-      } else {
-        // Fallback for demo state
-        setResources(prev => [newRes, ...prev]);
-        setActionSuccess(`Registered ${newRes.name} (Demonstration State).`);
-        setShowAddModal(false);
-        setName('');
-        setCapacity('');
-        setServiceArea('');
-      }
+      alert(`Failed to add resource: ${err.message}`);
     } finally {
       setSaving(false);
     }
