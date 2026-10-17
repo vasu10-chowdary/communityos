@@ -1,0 +1,33 @@
+# Node & Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+*.log
+
+# Python & Virtual Environments
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environment files & Secrets
+.env
+.env.*
+*.env
+*.env.*
+*.local
+serviceAccountKey*.json
+*serviceAccountKey*.json
+firebase-adminsdk*.json
+*credentials*.json
+client_secret*.json
+*.pem
+*.key
+
+# Operating System
+.DS_Store
+Thumbs.db

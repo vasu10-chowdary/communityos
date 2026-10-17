@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if user is authenticated with Firebase
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Role check helper: checks custom claims first, then users/{uid} document
+    function getUserRole() {
+      return (request.auth != null && 'role' in request.auth.token && request.auth.token.role != null) ? request.auth.token.role :
+        (request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) ?
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : 'citizen');
+    }
+
+    function isCoordinator() {
+      return isAuthenticated() && (getUserRole() == 'coordinator' || getUserRole() == 'admin');
+    }
+
+    function isResponder() {
+      return isAuthenticated() && (getUserRole() == 'responder' || isCoordinator());
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+    
+    // Validation for incident submission
+    function isValidIncident() {
+      return request.resource.data.title is string &&
+             request.resource.data.title.size() >= 3 &&
+             request.resource.data.description is string &&
+             request.resource.data.description.size() >= 10;
+    }
+
+    // Users collection (stores profile and role mappings)
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      // Users can create their own profile document with default citizen role
+      allow create: if isOwner(userId) && (!('role' in request.resource.data) || request.resource.data.role == 'citizen' || isCoordinator());
+      // Only coordinators can change user roles
+      allow update: if isCoordinator() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
+      allow delete: if isCoordinator();
+    }
+
+    // Incidents Collection
+    match /incidents/{incidentId} {
+      // Anyone can read incidents on public command deck and map
+      allow read: if true;
+      
+      // Creating an incident:
+      // - Must be authenticated
+      // - Must validate payload schema
+      // - Must bind reporter_id to authenticated UID
+      // - Non-coordinators cannot create incidents with pre-assigned resources or pre-set resolved status
+      allow create: if isAuthenticated() && isValidIncident() && 
+                    request.resource.data.reporter_id == request.auth.uid &&
+                    (isCoordinator() || (
+                      request.resource.data.status == 'Reported' &&
+                      !('assigned_resource_id' in request.resource.data) &&
+                      !('assigned_resource_name' in request.resource.data)
+                    ));
+      
+      // Updating an incident:
+      // - Coordinators can update any valid fields (assign resources, resolve, review)
+      // - Responders can only update progress notes, status to 'In Progress', and updated_at
+      // - Citizens can only edit their own pending report (status == 'Reported') and cannot modify status, severity, or assignments
+      allow update: if isAuthenticated() && (
+        isCoordinator() ||
+        (isResponder() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['responder_notes', 'status', 'updated_at', 'last_updated_by'])) ||
+        (resource.data.reporter_id == request.auth.uid && 
+         resource.data.status == 'Reported' &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'severity', 'severity_level', 'assigned_resource_id', 'assigned_resource_name', 'reporter_id']))
+      );
+      
+      // Deletions strictly restricted to explicit demo items by coordinator
+      allow delete: if isCoordinator() && resource.data.is_demo == true;
+    }
+    
+    // Resources Collection (pumps, cleanup teams, water tankers, medical squads)
+    match /resources/{resourceId} {
+      // Anyone can view resource readiness
+      allow read: if true;
+      // Only coordinators can create, edit, or delete civic resources
+      allow create, update: if isCoordinator();
+      allow delete: if isCoordinator() && resource.data.is_demo == true;
+    }
+    
+    // Analyses Collection (Audit of Gemini assessments)
+    match /analyses/{analysisId} {
+      allow read: if true;
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Append-only immutable audit record
+    }
+
+    // Duplicate links collection (Preserves original reports)
+    match /duplicate_links/{linkId} {
+      allow read: if true;
+      allow create: if isCoordinator();
+      allow update, delete: if false;
+    }
+
+    // Immutable Audit logs collection
+    match /audit_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+  }
+}

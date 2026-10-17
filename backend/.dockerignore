@@ -1,0 +1,33 @@
+# Sensitive credential and environment files
+.env
+.env.*
+*.env
+*.env.*
+serviceAccountKey.json
+*serviceAccountKey*.json
+*credentials*.json
+client_secret*.json
+
+# Virtual environments and local dependencies
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing and development artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+
+# Git and OS metadata
+.git/
+.gitignore
+.DS_Store
+Thumbs.db
