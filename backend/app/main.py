@@ -33,6 +33,17 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
+@app.get("/", tags=["system"])
+async def root():
+    return {
+        "service": settings.PROJECT_NAME,
+        "status": "online",
+        "description": "CommunityOS Emergency Coordination Intelligence Engine",
+        "health_check": "/health",
+        "docs": "/docs",
+        "notice": "For the CommunityOS interactive application interface, visit the Next.js frontend application."
+    }
+
 @app.get("/health", tags=["system"])
 async def health_check():
     return {

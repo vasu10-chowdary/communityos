@@ -14,7 +14,7 @@ import {
   X
 } from 'lucide-react';
 import { IncidentCategory } from '@/types/incident';
-import { apiFetch } from '@/lib/api';
+import { createIncident } from '@/lib/demoStore';
 import { useUserRole } from '@/lib/roleContext';
 
 const CATEGORIES: IncidentCategory[] = [
@@ -117,30 +117,26 @@ export default function ReportPage() {
 
     setSubmitting(true);
     try {
-      const newIncident = {
+      const created = createIncident({
         title: title.trim(),
         description: description.trim(),
         category,
         location: location.trim(),
         latitude: latitude ? parseFloat(latitude) : 37.7749,
         longitude: longitude ? parseFloat(longitude) : -122.4194,
-        image_url: imagePreview || null,
-        image_base64: imageBase64 || null,
-        is_demo: false,
-      };
-
-      const result = await apiFetch('/api/incidents', {
-        method: 'POST',
-        body: JSON.stringify(newIncident)
+        image_url: imagePreview || undefined,
+        image_base64: imageBase64 || undefined,
+        reporter_name: reporterName.trim() || userName,
+        reporter_id: userId,
       });
 
-      setSuccessMsg(`Incident #${result.id || ''} securely logged to CommunityOS! Redirecting...`);
+      setSuccessMsg(`Incident #${created.id} securely created in demo store! Redirecting to incident triage...`);
       setTimeout(() => {
-        router.push(result.id ? `/incident/${result.id}` : '/dashboard');
-      }, 1200);
+        router.push(`/incident/${created.id}`);
+      }, 1000);
     } catch (err: any) {
       console.warn("Incident creation error:", err);
-      setErrorMsg(`Failed to save incident: ${err.message || 'Unknown server error'}.`);
+      setErrorMsg(`Failed to save incident: ${err.message || 'Unknown error'}.`);
     } finally {
       setSubmitting(false);
     }

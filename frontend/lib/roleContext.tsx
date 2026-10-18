@@ -1,8 +1,8 @@
-'use client';
+﻿'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserRole } from '@/types/incident';
-import { requestAuthToken, getStoredRole, setStoredRole } from '@/lib/auth';
+import { resetDemoStore } from '@/lib/demoStore';
 
 interface RoleContextType {
   role: UserRole;
@@ -13,6 +13,7 @@ interface RoleContextType {
   isDemoData: boolean;
   setIsDemoData: (val: boolean) => void;
   authReady: boolean;
+  resetDemo: () => void;
 }
 
 const RoleContext = createContext<RoleContextType>({
@@ -21,16 +22,18 @@ const RoleContext = createContext<RoleContextType>({
   userId: 'coord-ops-lead',
   userName: 'Marcus Vance (Operations Coordinator)',
   user: null,
-  isDemoData: false,
+  isDemoData: true,
   setIsDemoData: () => {},
-  authReady: false
+  authReady: true,
+  resetDemo: () => {}
 });
+
+const ROLE_STORAGE_KEY = 'communityos_active_role_demo';
 
 export const RoleProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [role, setRoleState] = useState<UserRole>('coordinator');
-  const [user, setUser] = useState<{ uid: string; role: string; displayName: string; email?: string } | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [isDemoData, setIsDemoData] = useState(false);
+  const [isDemoData, setIsDemoData] = useState(true);
 
   const getPersonaDetails = (currentRole: UserRole) => {
     switch (currentRole) {
@@ -53,55 +56,55 @@ export const RoleProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const syncAuth = useCallback(async (targetRole: UserRole) => {
-    try {
-      const persona = getPersonaDetails(targetRole);
-      const tokenPayload = await requestAuthToken(targetRole, persona.name, persona.uid);
-      setRoleState(tokenPayload.role as UserRole);
-      setUser({
-        uid: tokenPayload.uid,
-        role: tokenPayload.role,
-        displayName: tokenPayload.name,
-        email: tokenPayload.email
-      });
-      setStoredRole(tokenPayload.role);
-    } catch (err) {
-      console.warn("Could not sync JWT token with backend:", err);
-      const persona = getPersonaDetails(targetRole);
-      setRoleState(targetRole);
-      setUser({
-        uid: persona.uid,
-        role: targetRole,
-        displayName: persona.name
-      });
-    } finally {
-      setAuthReady(true);
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(ROLE_STORAGE_KEY) as UserRole;
+        if (saved && ['coordinator', 'citizen', 'responder'].includes(saved)) {
+          setRoleState(saved);
+        }
+      } catch {
+        // Safe localStorage fallback
+      }
     }
+    setAuthReady(true);
   }, []);
 
-  useEffect(() => {
-    const savedRole = (getStoredRole() as UserRole) || 'coordinator';
-    syncAuth(savedRole);
-  }, [syncAuth]);
-
   const setRole = async (newRole: UserRole) => {
-    await syncAuth(newRole);
+    setRoleState(newRole);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(ROLE_STORAGE_KEY, newRole);
+      } catch {
+        // Safe localStorage fallback
+      }
+    }
+  };
+
+  const resetDemo = () => {
+    resetDemoStore();
+    setRole('coordinator');
   };
 
   const persona = getPersonaDetails(role);
-  const userId = user?.uid || persona.uid;
-  const userName = user?.displayName || persona.name;
+  const user = {
+    uid: persona.uid,
+    role,
+    displayName: persona.name,
+    email: `${role}@communityos.demo`
+  };
 
   return (
     <RoleContext.Provider value={{
       role,
       setRole,
-      userId,
-      userName,
+      userId: persona.uid,
+      userName: persona.name,
       user,
       isDemoData,
       setIsDemoData,
-      authReady
+      authReady,
+      resetDemo
     }}>
       {children}
     </RoleContext.Provider>

@@ -52,9 +52,9 @@ export default function Home() {
           </div>
 
           {/* Quick Evaluator Access Info */}
-          <div className="pt-6 max-w-xl mx-auto bg-navy-800/80 border border-navy-700 rounded-lg p-3 text-xs text-slate-300 flex items-center justify-center space-x-2">
+          <div className="pt-6 max-w-2xl mx-auto bg-navy-800/80 border border-navy-700 rounded-lg p-3 text-xs text-slate-300 flex items-center justify-center space-x-2">
             <CheckCircle2 className="w-4 h-4 text-civic-green flex-shrink-0" />
-            <span>Evaluator Demo: Seamless access enabled with instant Firebase Anonymous authentication.</span>
+            <span>Competition Demo: Instant client-side execution with persistent local storage. Zero configuration required.</span>
           </div>
         </div>
       </section>
@@ -103,29 +103,33 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Mandatory Tech Integration Badges */}
+      {/* Tech Integration Badges & Competition Disclaimer */}
       <section className="bg-slate-100 py-12 px-4 border-t border-slate-200 mt-auto">
-        <div className="max-w-7xl mx-auto">
-          <h3 className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500 mb-6">
-            Four Mandatory Challenge Technologies Integrated
+        <div className="max-w-7xl mx-auto space-y-6">
+          <h3 className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Core Architecture & Capabilities
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-              <div className="font-semibold text-sm text-slate-900">Firebase Auth</div>
-              <div className="text-xs text-slate-500 mt-1">Anonymous & Evaluator Access</div>
-            </div>
-            <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-              <div className="font-semibold text-sm text-slate-900">Cloud Firestore</div>
-              <div className="text-xs text-slate-500 mt-1">Real-time persistence & transactions</div>
-            </div>
-            <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-              <div className="font-semibold text-sm text-slate-900">Google Cloud Run</div>
-              <div className="text-xs text-slate-500 mt-1">Containerized FastAPI service</div>
+              <div className="font-semibold text-sm text-slate-900">Next.js 15 App Router</div>
+              <div className="text-xs text-slate-500 mt-1">Responsive Civic Interface</div>
             </div>
             <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
               <div className="font-semibold text-sm text-slate-900">Google Gemini Gen AI</div>
-              <div className="text-xs text-slate-500 mt-1">Real server-side risk reasoning</div>
+              <div className="text-xs text-slate-500 mt-1">Multimodal Risk Triage Engine</div>
             </div>
+            <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+              <div className="font-semibold text-sm text-slate-900">Reactive State Store</div>
+              <div className="text-xs text-slate-500 mt-1">Browser-Persisted Incident DB</div>
+            </div>
+            <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+              <div className="font-semibold text-sm text-slate-900">Role-Based Access</div>
+              <div className="text-xs text-slate-500 mt-1">Citizen, Coordinator, Responder</div>
+            </div>
+          </div>
+
+          <div className="text-center text-xs text-slate-500 pt-2 border-t border-slate-200/60 max-w-2xl mx-auto">
+            <strong>DEMO PROTOTYPE DISCLAIMER:</strong> CommunityOS is an engineering competition prototype. Emergency hazard reports generated here are processed in browser memory/localStorage and are NOT connected to municipal 911 or live dispatchers.
           </div>
         </div>
       </section>

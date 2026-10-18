@@ -3,15 +3,15 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { 
-  ArrowLeft, 
-  Sparkles, 
-  AlertTriangle, 
-  ShieldCheck, 
-  Truck, 
-  CheckCircle2, 
-  MapPin, 
-  Clock, 
+import {
+  ArrowLeft,
+  Sparkles,
+  AlertTriangle,
+  ShieldCheck,
+  Truck,
+  CheckCircle2,
+  MapPin,
+  Clock,
   RefreshCw,
   Copy,
   GitMerge,
@@ -21,9 +21,19 @@ import {
   Send
 } from 'lucide-react';
 import { Incident, Resource, AIAnalysis, IncidentStatus } from '@/types/incident';
-import { SEED_INCIDENTS, SEED_RESOURCES } from '@/lib/seedData';
 import { useUserRole } from '@/lib/roleContext';
-import { apiFetch } from '@/lib/api';
+import {
+  getIncidentById,
+  getIncidents,
+  getResources,
+  assignResource,
+  updateIncidentStatus,
+  mergeIncidents,
+  checkDuplicates,
+  recommendResources,
+  simulateGeminiAnalysis,
+  subscribeToStore
+} from '@/lib/demoStore';
 
 interface DuplicateCandidate {
   incident_id: string;
@@ -50,7 +60,7 @@ export default function IncidentDetailPage() {
   const { role, userId, userName } = useUserRole();
 
   const [incident, setIncident] = useState<Incident | null>(null);
-  const [resources, setResources] = useState<Resource[]>(SEED_RESOURCES);
+  const [resources, setResources] = useState<Resource[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -68,35 +78,22 @@ export default function IncidentDetailPage() {
   const [recommending, setRecommending] = useState(false);
   const [responderNote, setResponderNote] = useState('');
 
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
-
   useEffect(() => {
-    const found = SEED_INCIDENTS.find(i => i.id === incidentId);
-    if (found) {
-      setIncident(found);
-    }
-
-    const fetchDoc = async () => {
-      try {
-        const [incData, resList] = await Promise.all([
-          apiFetch<Incident>(`/api/incidents/${incidentId}`),
-          apiFetch<Resource[]>('/api/incidents/resources/pool')
-        ]);
-        if (incData) {
-          setIncident(incData);
-        }
-        if (resList && resList.length > 0) {
-          setResources(resList);
-        }
-      } catch (e) {
-        console.info("Using incident state fallback:", e);
+    const loadData = () => {
+      const doc = getIncidentById(incidentId);
+      if (doc) {
+        setIncident(doc);
       }
+      setResources(getResources());
     };
-    if (incidentId) fetchDoc();
+    if (incidentId) {
+      loadData();
+    }
+    return subscribeToStore(loadData);
   }, [incidentId]);
 
-  // Check for duplicates using live Firestore incidents
-  const handleCheckDuplicates = async () => {
+  // Check for duplicates using client queue
+  const handleCheckDuplicates = () => {
     if (!incident) return;
     setCheckingDuplicates(true);
     setDuplicateError(null);
@@ -104,56 +101,29 @@ export default function IncidentDetailPage() {
     setDuplicateMatches([]);
 
     try {
-      let existingIncidents: Array<{
-        id: string;
-        title: string;
-        description: string;
-        category: string;
-        latitude?: number;
-        longitude?: number;
-      }> = [];
+      const allOther = getIncidents().filter(i => i.id !== incident.id);
+      setScannedCount(allOther.length);
 
-      try {
-        const allIncidents = await apiFetch<Incident[]>('/api/incidents');
-        existingIncidents = (allIncidents || [])
-          .filter(i => i.id !== incident.id)
-          .map(d => ({
-            id: d.id,
-            title: d.title || '',
-            description: d.description || '',
-            category: d.category || '',
-            latitude: typeof d.latitude === 'number' ? d.latitude : undefined,
-            longitude: typeof d.longitude === 'number' ? d.longitude : undefined,
-          }));
-      } catch (err: any) {
-        console.info("Backend incident query for duplicate check:", err);
-      }
-
-      setScannedCount(existingIncidents.length);
-
-      if (existingIncidents.length === 0) {
+      if (allOther.length === 0) {
         setDuplicateMatches([]);
         setDuplicateScanned(true);
         setActionSuccess('No other reports currently in queue to compare against.');
         return;
       }
 
-      const data = await apiFetch('/api/incidents/check-duplicates', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: incident.title,
-          description: incident.description,
-          category: incident.category,
-          latitude: incident.latitude,
-          longitude: incident.longitude,
-          existing_incidents: existingIncidents
-        })
+      const result = checkDuplicates({
+        id: incident.id,
+        title: incident.title,
+        description: incident.description,
+        category: incident.category,
+        latitude: incident.latitude,
+        longitude: incident.longitude
       });
 
-      setDuplicateMatches(data.matches || []);
+      setDuplicateMatches(result.matches || []);
       setDuplicateScanned(true);
-      if (!data.matches || data.matches.length === 0) {
-        setActionSuccess(`Scanned ${existingIncidents.length} report(s). No near-duplicate clusters identified.`);
+      if (!result.matches || result.matches.length === 0) {
+        setActionSuccess(`Scanned ${allOther.length} report(s). No near-duplicate clusters identified.`);
       }
     } catch (e: any) {
       console.warn("Duplicate check error:", e);
@@ -164,22 +134,19 @@ export default function IncidentDetailPage() {
   };
 
   // Merge duplicate
-  const handleConfirmMerge = async (primaryId: string) => {
+  const handleConfirmMerge = (primaryId: string) => {
     if (role !== 'coordinator') {
       alert('RBAC Warning: Only Coordinators can merge duplicate incidents.');
       return;
     }
     try {
-      await apiFetch('/api/incidents/merge', {
-        method: 'POST',
-        body: JSON.stringify({
-          primary_incident_id: primaryId,
-          duplicate_incident_id: incident?.id,
-          merge_reason: 'Confirmed report duplicate by incident coordinator.'
-        })
-      });
-      setMergeStatus(`Linked as duplicate of #${primaryId}. Preserved in history.`);
-      setActionSuccess(`Report #${incident?.id} safely linked to primary #${primaryId}.`);
+      const success = mergeIncidents(primaryId, incident?.id || '', 'Confirmed report duplicate by incident coordinator.');
+      if (success) {
+        setMergeStatus(`Linked as duplicate of #${primaryId}. Preserved in history.`);
+        setActionSuccess(`Report #${incident?.id} safely linked to primary #${primaryId}.`);
+      } else {
+        alert('Could not merge duplicate incident.');
+      }
     } catch (e: any) {
       console.warn("Merge error:", e);
       alert(`Merge failed: ${e.message}`);
@@ -194,32 +161,8 @@ export default function IncidentDetailPage() {
     setActionSuccess(null);
 
     try {
-      // Only send base64 if it is a valid data URI or base64 binary string (never arbitrary external http/https URLs)
-      let validImageBase64: string | undefined = undefined;
-      const rawImage = incident.image_base64 || incident.image_url;
-      if (rawImage) {
-        if (rawImage.startsWith('data:image/')) {
-          validImageBase64 = rawImage;
-        } else if (!rawImage.startsWith('http://') && !rawImage.startsWith('https://')) {
-          validImageBase64 = rawImage;
-        }
-      }
+      const analysisData = await simulateGeminiAnalysis(incident);
 
-      const analysisData = await apiFetch<AIAnalysis>('/api/incidents/analyze', {
-        method: 'POST',
-        body: JSON.stringify({
-          incident_id: incident.id,
-          title: incident.title,
-          description: incident.description,
-          category: incident.category,
-          location: incident.location,
-          latitude: incident.latitude,
-          longitude: incident.longitude,
-          image_base64: validImageBase64,
-          user_language: 'en'
-        })
-      });
-      
       const updatedIncident: Incident = {
         ...incident,
         severity_level: analysisData.severity_level,
@@ -234,30 +177,19 @@ export default function IncidentDetailPage() {
       // Automatically fetch resource recommendations based on new analysis
       handleRecommendResources(analysisData.severity_level, analysisData.urgency_score);
     } catch (err: any) {
-      setAnalysisError(err.message || 'Error communicating with FastAPI incident analysis endpoint.');
+      setAnalysisError(err.message || 'Error analyzing incident with Gemini.');
     } finally {
       setAnalyzing(false);
     }
   };
 
   // Recommend matching resources
-  const handleRecommendResources = async (sevLvl = 3, urgency = 75) => {
+  const handleRecommendResources = (sevLvl = 3, urgency = 75) => {
     if (!incident) return;
     setRecommending(true);
     try {
-      const data = await apiFetch('/api/incidents/recommend-resources', {
-        method: 'POST',
-        body: JSON.stringify({
-          incident_id: incident.id,
-          category: incident.category,
-          severity_level: sevLvl,
-          urgency_score: urgency,
-          latitude: incident.latitude,
-          longitude: incident.longitude,
-          available_resources: resources
-        })
-      });
-      setRecommendedResources(data.recommendations || []);
+      const recommendations = recommendResources(incident);
+      setRecommendedResources(recommendations || []);
     } catch (e: any) {
       console.warn("Resource matching error:", e);
     } finally {
@@ -266,31 +198,28 @@ export default function IncidentDetailPage() {
   };
 
   // Safe Assignment (Coordinator only)
-  const handleAssignResource = async (resourceId: string, resourceName: string) => {
+  const handleAssignResource = (resourceId: string, resourceName: string) => {
     if (role !== 'coordinator') {
       alert('Role Permission Error: Only Coordinators can approve and dispatch emergency units.');
       return;
     }
 
     try {
-      await apiFetch('/api/incidents/assign-resource', {
-        method: 'POST',
-        body: JSON.stringify({
-          incident_id: incident?.id,
-          resource_id: resourceId,
-          notes: `Dispatched by Coordinator ${userName}`
-        })
-      });
+      const result = assignResource(
+        incident?.id || '',
+        resourceId,
+        `Dispatched by Coordinator ${userName}`
+      );
 
-      const updated = {
-        ...incident!,
-        status: 'Resource Dispatched' as IncidentStatus,
-        assigned_resource_id: resourceId,
-        assigned_resource_name: resourceName,
-        updated_at: new Date().toISOString()
-      };
-      setIncident(updated);
-      setResources(prev => prev.map(r => r.id === resourceId ? { ...r, availability: 'Busy', assigned_incident: incident?.id } : r));
+      if (!result.success) {
+        alert(result.error || 'Assignment error');
+        return;
+      }
+
+      if (result.incident) {
+        setIncident(result.incident);
+      }
+      setResources(getResources());
       setActionSuccess(`Coordinator approved deployment of ${resourceName}!`);
     } catch (err: any) {
       alert(`Assignment Error: ${err.message}`);
@@ -298,59 +227,40 @@ export default function IncidentDetailPage() {
   };
 
   // Responder Progress Note
-  const handleSaveResponderNote = async () => {
+  const handleSaveResponderNote = () => {
     if (role !== 'responder' && role !== 'coordinator') {
       alert('Only Responders and Coordinators can submit field progress updates.');
       return;
     }
+    if (!incident) return;
+
     try {
-      await apiFetch('/api/incidents/update-status', {
-        method: 'POST',
-        body: JSON.stringify({
-          incident_id: incident?.id,
-          status: 'In Progress',
-          responder_progress_note: responderNote
-        })
-      });
-      const updated = {
-        ...incident!,
-        status: 'In Progress' as IncidentStatus,
-        responder_notes: responderNote,
-        updated_at: new Date().toISOString()
-      };
-      setIncident(updated);
-      setActionSuccess('Responder progress note recorded!');
+      const result = updateIncidentStatus(incident.id, 'In Progress', responderNote);
+      if (result.updatedIncident) {
+        setIncident(result.updatedIncident);
+        setResponderNote('');
+        setActionSuccess('Responder progress note recorded!');
+      }
     } catch (err: any) {
       alert(`Update Error: ${err.message}`);
     }
   };
 
   // Status Lifecycle Update
-  const handleUpdateStatus = async (newStatus: IncidentStatus) => {
+  const handleUpdateStatus = (newStatus: IncidentStatus) => {
     if (newStatus === 'Resolved' && role !== 'coordinator') {
       alert('RBAC Violation: Only Coordinators can officially resolve an incident.');
       return;
     }
+    if (!incident) return;
 
     try {
-      await apiFetch('/api/incidents/update-status', {
-        method: 'POST',
-        body: JSON.stringify({
-          incident_id: incident?.id,
-          status: newStatus
-        })
-      });
-
-      const updated = {
-        ...incident!,
-        status: newStatus,
-        updated_at: new Date().toISOString()
-      };
-      if (newStatus === 'Resolved' && incident?.assigned_resource_id) {
-        setResources(prev => prev.map(r => r.id === incident.assigned_resource_id ? { ...r, availability: 'Available', assigned_incident: undefined } : r));
+      const result = updateIncidentStatus(incident.id, newStatus);
+      if (result.updatedIncident) {
+        setIncident(result.updatedIncident);
+        setResources(getResources());
+        setActionSuccess(`Incident status updated to "${newStatus}".`);
       }
-      setIncident(updated);
-      setActionSuccess(`Incident status updated to "${newStatus}".`);
     } catch (err: any) {
       alert(`Status update failed: ${err.message}`);
     }
@@ -616,7 +526,7 @@ export default function IncidentDetailPage() {
         {checkingDuplicates && (
           <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 flex items-center space-x-2">
             <RefreshCw className="w-4 h-4 text-civic-teal animate-spin flex-shrink-0" />
-            <span>Querying live Firestore incidents and evaluating proximity...</span>
+            <span>Scanning incident queue and evaluating spatial proximity...</span>
           </div>
         )}
 
@@ -662,7 +572,7 @@ export default function IncidentDetailPage() {
 
         {!checkingDuplicates && !duplicateError && !duplicateScanned && (
           <p className="text-xs text-slate-500">
-            Click &ldquo;Scan for Near Duplicates&rdquo; to evaluate lexical and geographic proximity against active Firestore reports.
+            Click &ldquo;Scan for Near Duplicates&rdquo; to evaluate lexical and geographic proximity against active queue reports.
           </p>
         )}
       </div>

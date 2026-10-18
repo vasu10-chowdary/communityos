@@ -13,45 +13,27 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { Incident } from '@/types/incident';
-import { SEED_INCIDENTS } from '@/lib/seedData';
-import { apiFetch } from '@/lib/api';
+import { getIncidents, subscribeToStore } from '@/lib/demoStore';
 import { useUserRole } from '@/lib/roleContext';
 
 export default function IncidentMapPage() {
-  const { isDemoData, setIsDemoData } = useUserRole();
+  const { isDemoData } = useUserRole();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [filterSeverity, setFilterSeverity] = useState('ALL');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const loadIncidents = async () => {
-    try {
-      setLoading(true);
-      setErrorMsg(null);
-      const list = await apiFetch<Incident[]>('/api/incidents');
-      if (list && list.length > 0) {
-        setIncidents(list);
-        setSelectedIncident(list[0]);
-        setIsDemoData(list.every(i => i.is_demo));
-      } else {
-        setIncidents(SEED_INCIDENTS);
-        setSelectedIncident(SEED_INCIDENTS[0]);
-        setIsDemoData(true);
-      }
-    } catch (err: any) {
-      console.info("Using seed fallback on map:", err.message);
-      setIncidents(SEED_INCIDENTS);
-      setSelectedIncident(SEED_INCIDENTS[0]);
-      setIsDemoData(true);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadIncidents();
-  }, [setIsDemoData]);
+    const syncData = () => {
+      const list = getIncidents();
+      setIncidents(list);
+      setSelectedIncident(prev => prev ? list.find(i => i.id === prev.id) || list[0] : list[0]);
+    };
+    syncData();
+    const unsubscribe = subscribeToStore(syncData);
+    return () => unsubscribe();
+  }, []);
 
   const filteredIncidents = incidents.filter(i => {
     if (filterSeverity === 'ALL') return true;

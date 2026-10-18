@@ -12,8 +12,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { Incident, Resource } from '@/types/incident';
-import { SEED_INCIDENTS, SEED_RESOURCES } from '@/lib/seedData';
-import { apiFetch } from '@/lib/api';
+import { getIncidents, getResources, subscribeToStore } from '@/lib/demoStore';
 import { useUserRole } from '@/lib/roleContext';
 
 export default function AnalyticsPage() {
@@ -23,40 +22,23 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const loadAnalyticsData = async () => {
-    try {
-      setLoading(true);
-      setErrorMsg(null);
-      const [incList, resList] = await Promise.all([
-        apiFetch<Incident[]>('/api/incidents'),
-        apiFetch<Resource[]>('/api/incidents/resources/pool')
-      ]);
-
-      if (incList && incList.length > 0) {
-        setIncidents(incList);
-        setIsDemoData(incList.every(i => i.is_demo));
-      } else {
-        setIncidents(SEED_INCIDENTS);
-        setIsDemoData(true);
-      }
-
-      if (resList && resList.length > 0) {
-        setResources(resList);
-      } else {
-        setResources(SEED_RESOURCES);
-      }
-    } catch (err: any) {
-      console.info("Using seed fallback on analytics:", err.message);
-      setIncidents(SEED_INCIDENTS);
-      setResources(SEED_RESOURCES);
-      setIsDemoData(true);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadAnalyticsData();
+    const refreshData = () => {
+      try {
+        const incList = getIncidents();
+        const resList = getResources();
+        setIncidents(incList);
+        setResources(resList);
+        setIsDemoData(true);
+      } catch (err: any) {
+        console.warn('Analytics store load warning:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    refreshData();
+    return subscribeToStore(refreshData);
   }, [setIsDemoData]);
 
   // Dynamic calculations from live data
@@ -113,7 +95,7 @@ export default function AnalyticsPage() {
       {loading ? (
         <div className="p-12 text-center text-slate-500 flex flex-col items-center justify-center space-y-2">
           <Loader2 className="w-8 h-8 animate-spin text-civic-teal" />
-          <span className="text-sm">Aggregating real-time incident analytics from Cloud Firestore...</span>
+          <span className="text-sm">Aggregating real-time incident intelligence analytics...</span>
         </div>
       ) : (
         <>

@@ -5,6 +5,7 @@ out/
 build/
 dist/
 *.log
+*.tsbuildinfo
 
 # Python & Virtual Environments
 venv/

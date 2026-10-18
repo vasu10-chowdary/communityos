@@ -55,8 +55,8 @@ export interface Incident {
   location: string;
   latitude?: number;
   longitude?: number;
-  image_url?: string; // Multimodal photograph
-  image_base64?: string;
+  image_url?: string | null; // Multimodal photograph
+  image_base64?: string | null;
   created_at: string;
   updated_at?: string;
   reporter_id: string;
@@ -66,6 +66,7 @@ export interface Incident {
   assigned_resource_name?: string;
   latest_analysis?: AIAnalysis;
   responder_notes?: string;
+  resolution_notes?: string;
   duplicate_of?: string; // Linked duplicate ID
   merged_reports?: string[];
 }
@@ -82,4 +83,5 @@ export interface Resource {
   is_demo?: boolean;
   latitude?: number;
   longitude?: number;
+  notes?: string;
 }

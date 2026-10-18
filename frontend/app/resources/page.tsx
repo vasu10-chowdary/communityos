@@ -14,15 +14,14 @@ import {
   Lock
 } from 'lucide-react';
 import { Resource } from '@/types/incident';
-import { SEED_RESOURCES } from '@/lib/seedData';
-import { apiFetch } from '@/lib/api';
+import { getResources, createResource, subscribeToStore } from '@/lib/demoStore';
 import { useUserRole } from '@/lib/roleContext';
 
 export default function ResourcesPage() {
-  const { role, isDemoData, setIsDemoData } = useUserRole();
+  const { role } = useUserRole();
   const [resources, setResources] = useState<Resource[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
@@ -32,30 +31,14 @@ export default function ResourcesPage() {
   const [capacity, setCapacity] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const loadResources = async () => {
-    try {
-      setLoading(true);
-      setErrorMsg(null);
-      const list = await apiFetch<Resource[]>('/api/incidents/resources/pool');
-      if (list && list.length > 0) {
-        setResources(list);
-        setIsDemoData(list.every(r => r.is_demo));
-      } else {
-        setResources(SEED_RESOURCES);
-        setIsDemoData(true);
-      }
-    } catch (err: any) {
-      console.info("Using seed fallback on resources:", err.message);
-      setResources(SEED_RESOURCES);
-      setIsDemoData(true);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadResources();
-  }, [setIsDemoData]);
+    const syncData = () => {
+      setResources(getResources());
+    };
+    syncData();
+    const unsubscribe = subscribeToStore(syncData);
+    return () => unsubscribe();
+  }, []);
 
   const handleAddResource = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,21 +51,17 @@ export default function ResourcesPage() {
 
     setSaving(true);
     try {
-      const created = await apiFetch('/api/incidents/resources/pool', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: name.trim(),
-          type,
-          service_area: serviceArea.trim() || 'Central District',
-          capacity: capacity.trim() || 'Standard Response Pack',
-        })
+      const created = createResource({
+        name: name.trim(),
+        type,
+        service_area: serviceArea.trim() || 'Central District',
+        capacity: capacity.trim() || 'Standard Response Pack',
       });
-      setActionSuccess(`Registered ${created.name || name} successfully.`);
+      setActionSuccess(`Registered ${created.name} successfully.`);
       setShowAddModal(false);
       setName('');
       setCapacity('');
       setServiceArea('');
-      await loadResources();
     } catch (err: any) {
       alert(`Failed to add resource: ${err.message}`);
     } finally {
