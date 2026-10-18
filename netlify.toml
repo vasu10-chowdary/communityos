@@ -1,0 +1,10 @@
+# Netlify configuration for CommunityOS
+# The Next.js application lives in the frontend/ subdirectory.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
